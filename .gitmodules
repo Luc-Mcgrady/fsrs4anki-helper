@@ -1,0 +1,3 @@
+[submodule "fsrs-optimizer-burn"]
+	path = fsrs-optimizer-burn
+	url = https://github.com/Luc-Mcgrady/fsrs-optimizer-burn.git
