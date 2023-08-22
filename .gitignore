@@ -15,3 +15,5 @@ meta
 meta.json
 .vscode/
 tmp/
+
+fsrs_optimizer_rust*
