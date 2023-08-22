@@ -154,8 +154,8 @@ Alternatively, use a different method of optimizing (https://github.com/open-spa
         def run(self):
             revlogs = mw.col.db.all(f"""
 SELECT revlog.* FROM revlog
-JOIN cards on revlog.cid == cards.id
-WHERE cards.did == {did}
+JOIN cards on revlog.cid = cards.id
+WHERE cards.did in {mw.col.sched._deck_limit():s}
 """)
 
             COLUMNS = ["id", "cid", "usn", "ease", "ivl", "lastIvl", "factor", "time", "type"]
