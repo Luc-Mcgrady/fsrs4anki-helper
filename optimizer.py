@@ -1,17 +1,13 @@
 from .utils import *
 from .configuration import *
 
-from anki.exporting import AnkiPackageExporter
 from anki.decks import DeckManager
 from aqt.qt import QThreadPool, QRunnable, QObject, pyqtSignal, QDialog
 from aqt.utils import showInfo, showCritical, askUserDialog
 import aqt
 import aqt.forms
 
-import os
 import time
-import sys
-import importlib
 
 class InstallerQDialog(QDialog):
     def __init__(self, mw):
@@ -59,69 +55,10 @@ def optimize(did: int):
 
 def _optimize(did: int):
 
-    try: # This code is here so that when it fails the popup can show immediately rather than after the after the cancel prompt
-        # Progress bar -> tooltip
-                
-        from tqdm import tqdm, cli
-        from tqdm.notebook import tqdm_notebook
-
-        # orig = tqdm.update
-        last_print = time.time()
-        def update(self, n=1):
-            nonlocal last_print
-            #orig(self,n)
-            self.n += n
-            if last_print + update_period < time.time():
-                _progress.progress.emit(self.n, self.total)
-                last_print = time.time()
-
-        noop = lambda *args, **kwargs: noop
-        
-        orig_init = tqdm.__init__
-        def new_init(self, *args, **kwargs):
-            kwargs["file"] = sys.stdout
-            orig_init(self, *args, **kwargs)
-        tqdm.__init__ = new_init
-
-        orig_notebook_init = tqdm_notebook.__init__
-        def new_notebook_init(self, *args, **kwargs):
-            kwargs["display"] = False
-            orig_notebook_init(self, *args, **kwargs)
-        tqdm_notebook.__init__ = new_notebook_init
-
-        tqdm.update = update
-        tqdm.close = noop
-
-        from fsrs4anki_optimizer import Optimizer
-    except ImportError as e:
-        showCritical(
-f"""
-Error: {e}
-You need to have the optimizer installed in order to optimize your decks using this option.
-Please run Tools>FSRS4Anki helper>Install local optimizer.
-Alternatively, use a different method of optimizing (https://github.com/open-spaced-repetition/fsrs4anki/releases)
-""")
-        return
-
-    exporter = AnkiPackageExporter(mw.col)
     manager = DeckManager(mw.col)
     deck = manager.get(did)
     assert deck
     name = deck["name"]
-
-    dir_path = os.path.expanduser("~/.fsrs4ankiHelper")
-    tmp_dir_path = f"{dir_path}/tmp"
-
-    exporter.did = did
-    exporter.includeMedia = False
-    exporter.includeSched = True
-
-    export_file_path = f"{tmp_dir_path}/{did}.apkg"
-    
-    if not os.path.isdir(dir_path):
-        os.mkdir(dir_path)
-    if not os.path.isdir(tmp_dir_path):
-        os.mkdir(tmp_dir_path)
 
     preferences = mw.col.get_preferences()
 
