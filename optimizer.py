@@ -1,12 +1,9 @@
-import typing
-from PyQt6 import QtCore
-from PyQt6.QtWidgets import QWidget
 from .utils import *
 from .configuration import *
 
 from anki.exporting import AnkiPackageExporter
 from anki.decks import DeckManager
-from aqt.qt import QProcess, QThreadPool, QRunnable, QObject, pyqtSignal, QDialog
+from aqt.qt import QThreadPool, QRunnable, QObject, pyqtSignal, QDialog
 from aqt.utils import showInfo, showCritical, askUserDialog
 import aqt
 import aqt.forms
@@ -14,8 +11,7 @@ import aqt.forms
 import os
 import time
 import sys
-import platform
-
+import importlib
 
 class InstallerQDialog(QDialog):
     def __init__(self, mw):
@@ -156,43 +152,26 @@ Alternatively, use a different method of optimizing (https://github.com/open-spa
         events = Events()
 
         def run(self):
-            optimizer = Optimizer()
-            
-            self.events.stage.emit("Exporting deck")
-            exporter.exportInto(export_file_path) # This is simply quicker than somehow making it so that anki doesn't zip the export
-            optimizer.anki_extract(export_file_path)
+            revlogs = mw.col.db.all(f"""
+SELECT revlog.* FROM revlog
+JOIN cards on revlog.cid == cards.id
+WHERE cards.did == {did}
+""")
 
-            self.events.stage.emit("Training model")
-            try:
-                optimizer.create_time_series(timezone, revlog_start_date, rollover)
-            except ValueError as e:
-                _progress.critical.emit(
-"""You got a value error, This usually happens when the deck has no or very few reviews.
-You have to do some reviews on the deck before you optimize it!""")
-                raise e
-            
-            optimizer.define_model()
-            try:
-                optimizer.pretrain(verbose=False)
-            except AttributeError: # The optimizer in version 3 has no pretrain function
-                pass
-            optimizer.train(verbose=False)
+            COLUMNS = ["id", "cid", "usn", "ease", "ivl", "lastIvl", "factor", "time", "type"]
 
-            DEFAULT_RETENTION = 0.8
+            revlogs = [{k: v for k,v in zip(COLUMNS, value)} for value in revlogs]
 
-            if get_optimal_retention:
-                self.events.stage.emit("Finding optimal retention (Ignore right number)")
-                optimizer.predict_memory_states()
-                optimizer.find_optimal_retention(False)
-            else:
-                optimizer.optimal_retention = DEFAULT_RETENTION
+            from .fsrs_optimizer_rust import train
+
+            w = train(revlogs)
 
             result = {
                 # Calculated
                 "name": name,
-                "w": optimizer.w,
-                REQUEST_RETENTION: optimizer.optimal_retention,
-                RETENTION_IS_NOT_OPTIMIZED: not get_optimal_retention,
+                "w": w,
+                REQUEST_RETENTION: 0.8,
+                RETENTION_IS_NOT_OPTIMIZED: True,
                 
                 # Defaults
                 MAX_INTERVAL: 36500, 
@@ -229,83 +208,3 @@ You have to do some reviews on the deck before you optimize it!""")
     worker.events.stage.connect(on_stage)
 
     QThreadPool.globalInstance().start(worker)
-
-downloader = QProcess()
-# downloader.setProcessChannelMode(QProcess.ProcessChannelMode.ForwardedChannels)
-    
-def install(_):
-    global downloader
-    confirmed = askUser(
-"""This will install the optimizer onto your system.
-
-You will need to install python or at least pip for this to work.
-
-This will occupy about 1GB of space and can take some time.
-Please dont close anki until the popup arrives telling you its complete.
-
-There are other options if you just need to optimize a few decks
-(consult https://github.com/open-spaced-repetition/fsrs4anki/releases).
-
-Proceed?""",
-title="Install local optimizer?")
-
-        
-    diag = InstallerQDialog(mw)
-    diag.show()
-
-    def onReadyReadStandardOutput():
-        diag._on_log_entry(downloader.readAllStandardOutput().data().decode("utf-8"))
-        diag._on_log_entry(downloader.readAllStandardError().data().decode("utf-8"))
-        # print(downloader.readAllStandardError().data().decode("utf-8"))
-
-    downloader.readyReadStandardOutput.connect(onReadyReadStandardOutput)
-    downloader.readyReadStandardError.connect(onReadyReadStandardOutput)
-
-    cancelled = False
-
-    def cancel(_):
-        nonlocal cancelled
-        cancelled = True
-        downloader.close()
-        showCritical("Installation canceled by user.")
-
-    diag.closeEvent = cancel
-
-    if confirmed: 
-        # Not everyone is going to have git installed but works for testing.
-        PACKAGE = 'fsrs4anki-optimizer'
-
-        if platform.system() in ("Windows", "Darwin"): # For windows
-            anki_path = sys.executable
-            anki_lib_path = os.path.dirname(anki_path)
-            anki_lib_path = os.path.join(anki_lib_path, "lib")
-
-            print(anki_lib_path)
-
-            # https://stackoverflow.com/a/2916320
-            # --no-user apparently helps with microsoft store installed python https://stackoverflow.com/questions/63783587/pip-install-cannot-combine-user-and-target
-            downloader.start("pip", ["install", f'--target={anki_lib_path}', PACKAGE, "--no-user"])
-        elif platform.system() == "Linux": # For linux (mac untested)
-            downloader.start(sys.executable, ["-m", "pip", "install", "--user", "--break-system-packages", PACKAGE])
-        else:
-            showCritical(f"Not supported for operating system: '{platform.system()}'")
-
-        tooltip("Installing optimizer")
-
-        def finished(exitCode,  exitStatus):
-            if cancelled:
-                return
-
-            if exitCode == 0:
-                showInfo("Optimizer installed successfully, restart for it to take effect")
-            else:
-                showCritical(
-f"""Optimizer wasn't installed. For more information, run anki in console mode. (on windows anki-console.bat)
-
-Error code: '{exitCode}', Error status '{exitStatus}'
-"""
-)
-        downloader.finished.connect(finished)
-
-        # timer = mw.progress.timer(100, lambda: onReadyReadStandardOutput(diag), True, False, parent=mw)
-

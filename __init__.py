@@ -16,7 +16,7 @@ from .configuration import (
     Config,
     run_on_configuration_change
 )
-from .optimizer import optimize, install as install_optimizer
+from .optimizer import optimize
 
 from aqt.utils import showInfo
 
@@ -113,7 +113,6 @@ menu_reset = build_action(reset, "Undo reschedulings in all cards")
 
 menu_disperse_siblings = build_action(disperse_siblings, "Disperse all siblings")
 
-menu_install_optimizer = build_action(install_optimizer, "Install local optimizer")
 menu_show_saved_optimized = build_action(lambda _: showInfo(config.results_string()), "Show saved optimized deck settings")
 add_action_to_gear(optimize, "Optimize")
 
@@ -129,7 +128,6 @@ menu_for_helper.addAction(menu_postpone)
 menu_for_helper.addAction(menu_advance)
 menu_for_helper.addAction(menu_reset)
 menu_for_helper.addAction(menu_disperse_siblings)
-menu_for_helper.addAction(menu_install_optimizer)
 menu_for_helper.addAction(menu_show_saved_optimized)
 
 
