@@ -183,7 +183,7 @@ You have to do some reviews on the deck before you optimize it!""")
             if get_optimal_retention:
                 self.events.stage.emit("Finding optimal retention (Ignore right number)")
                 optimizer.predict_memory_states()
-                optimizer.find_optimal_retention(False)
+                optimizer.find_optimal_retention()
             else:
                 optimizer.optimal_retention = DEFAULT_RETENTION
 
