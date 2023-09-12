@@ -6,6 +6,7 @@ import urllib.request
 import socket
 import re
 import os.path
+import json
 
 scheduler_qt_suffix = "_qt5" if qVersion().split(".")[0] == "5" else ""
 
@@ -59,7 +60,7 @@ def update_scheduler(_):
         else:
             return
 
-    upgraded_from_v3 = False
+    upgrade_from_v3 = False
     if local_scheduler_version[0] == 3:
         upgrade_to_dialog = askUserDialog(
             "The v4 FSRS scheduler has been released and the v3 FSRS scheduler is no longer getting updates. So it is recommended that you upgrade to the v4 FSRS scheduler.\n"
@@ -78,9 +79,7 @@ def update_scheduler(_):
             return
         if upgrade_to_response == "Upgrade to V4":
             scheduler_url = scheduler4_url
-            upgraded_from_v3 = True
-            local_scheduler = re.sub(
-                r"\s*\"(?:easyBonus|hardInterval)\".*,", "", local_scheduler)
+            upgrade_from_v3 = True
         else:
             scheduler_url = scheduler3_url
 
@@ -91,6 +90,33 @@ def update_scheduler(_):
     if internet_scheduler is None:
         return
     internet_scheduler_version = get_version(internet_scheduler)
+
+    if upgrade_from_v3:
+        deck_param_regex = r"{(.+?\"deckName\":.+?)}"
+        deck_params_regex = r"deckParams\s*=\s*(\[.*?\]);?\n"
+
+        def get_params(scheduler: str):
+            params = re.findall(deck_param_regex, scheduler, re.DOTALL)
+
+            if params is None:
+                showWarning("Could not parse params for replacement with v4 defaults, You will have to do it manually.")
+                return None
+
+            return params
+        
+        local_deck_params = get_params(local_scheduler)
+        internet_deck_params = get_params(internet_scheduler)
+
+        if not local_deck_params or not internet_deck_params:
+            # Fallback to just deleting the easyBonus and hardInterval
+            local_scheduler = re.sub( r"\s*\"(?:easyBonus|hardInterval)\".*,", "", local_scheduler)
+        else:
+            for i, deck in enumerate(local_deck_params):
+                replacement = internet_deck_params[0]
+                replacement["deckName"] = deck["deckName"]
+                local_deck_params[i] = replacement
+            
+            local_scheduler = re.sub(deck_params_regex, f"deckParams = {json.dumps(local_scheduler, indent=3)}")
 
     # Weight length checks
 
@@ -107,7 +133,7 @@ def update_scheduler(_):
 
         return weight_match.group(1).strip(",").count(",")
 
-    if not upgraded_from_v3 and weight_count(local_scheduler) != weight_count(internet_scheduler):
+    if not upgrade_from_v3 and weight_count(local_scheduler) != weight_count(internet_scheduler):
         showWarning(
             "The amount of weights in the latest scheduler default config and the amount of weights in the local scheduler differ.\n"
             "This likely means your configuration is incompatible with that of the latest optimizer\n"
@@ -157,7 +183,7 @@ def update_scheduler(_):
 
         showInfo(
             "Scheduler updated successfully."
-            if not upgraded_from_v3 else
+            if not upgrade_from_v3 else
             "Scheduler updated from v3 to v4 successfully.\n"
             "Remember to re-optimize your weights using the optimizer and then replace the weights in the scheduler config."
         )
