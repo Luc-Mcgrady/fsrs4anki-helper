@@ -4,12 +4,14 @@ from anki.cards import Card
 from .disperse_siblings import disperse_siblings_backgroud
 from aqt.gui_hooks import reviewer_did_answer_card
 
+from abc import ABC, abstractmethod
+
 
 def constrain_difficulty(difficulty: float) -> float:
     return min(10.0, max(1.0, difficulty))
 
 
-class FSRS:
+class FSRS(ABC):
     version: Tuple[int, int, int]
     w: List[float]
     enable_fuzz: bool
@@ -20,44 +22,16 @@ class FSRS:
     card: Card
     elapsed_days: int
 
+    def __new__(cls, version):
+        if version[0] == 3:
+            return object.__new__(FSRS3)
+        elif version[0] == 4:
+            return object.__new__(FSRS4)
+        else:
+            assert version[0] in (3, 4) and False # You can only reschedule for FSRS versions 3 and 4
+
     def __init__(self, version) -> None:
         self.version = version
-        if version[0] == 3:
-            self.w = [
-                1.0,
-                1.0,
-                5.0,
-                -0.5,
-                -0.5,
-                0.2,
-                1.4,
-                -0.12,
-                0.8,
-                2.0,
-                -0.2,
-                0.2,
-                1.0,
-            ]
-        elif version[0] == 4:
-            self.w = [
-                1.0,
-                2.0,
-                3.0,
-                4.0,
-                5.0,
-                0.5,
-                0.5,
-                0.2,
-                1.4,
-                0.2,
-                0.8,
-                2.0,
-                0.2,
-                0.2,
-                1.0,
-                0.5,
-                2.0,
-            ]
         self.enable_fuzz = False
         self.enable_load_balance = False
         self.free_days = []
@@ -79,7 +53,8 @@ class FSRS:
         for day in list(self.due_cnt_perday_from_first_day.keys()):
             if day < mw.col.sched.today:
                 self.due_cnt_perday_from_first_day[mw.col.sched.today] = (
-                    self.due_cnt_perday_from_first_day.get(mw.col.sched.today, 0)
+                    self.due_cnt_perday_from_first_day.get(
+                        mw.col.sched.today, 0)
                     + self.due_cnt_perday_from_first_day[day]
                 )
                 self.due_cnt_perday_from_first_day.pop(day)
@@ -93,91 +68,29 @@ class FSRS:
             )
         }
 
+    @abstractmethod
     def init_stability(self, rating: int) -> float:
-        if self.version[0] == 3:
-            return max(0.1, self.w[0] + self.w[1] * (rating - 1))
-        elif self.version[0] == 4:
-            return max(0.1, self.w[rating - 1])
+        pass
 
+    @abstractmethod
     def init_difficulty(self, rating: int) -> float:
-        if self.version[0] == 3:
-            return constrain_difficulty(self.w[2] + self.w[3] * (rating - 3))
-        elif self.version[0] == 4:
-            return constrain_difficulty(self.w[4] - self.w[5] * (rating - 3))
+        pass
 
+    @abstractmethod
     def next_difficulty(self, d: float, rating: int) -> float:
-        if self.version[0] == 3:
-            new_d = d + self.w[4] * (rating - 3)
-            return constrain_difficulty(self.mean_reversion(self.w[2], new_d))
-        elif self.version[0] == 4:
-            new_d = d - self.w[6] * (rating - 3)
-            return constrain_difficulty(self.mean_reversion(self.w[4], new_d))
+        pass
 
+    @abstractmethod
     def mean_reversion(self, init: float, current: float) -> float:
-        if self.version[0] == 3:
-            return self.w[5] * init + (1 - self.w[5]) * current
-        elif self.version[0] == 4:
-            return self.w[7] * init + (1 - self.w[7]) * current
+        pass
 
+    @abstractmethod
     def next_recall_stability(self, d: float, s: float, r: float, rating: int) -> float:
-        if self.version[0] == 3:
-            return min(
-                max(
-                    0.1,
-                    s
-                    * (
-                        1
-                        + math.exp(self.w[6])
-                        * (11 - d)
-                        * math.pow(s, self.w[7])
-                        * (math.exp((1 - r) * self.w[8]) - 1)
-                    ),
-                ),
-                36500,
-            )
-        elif self.version[0] == 4:
-            hard_penalty = self.w[15] if rating == 2 else 1
-            easy_bonus = self.w[16] if rating == 4 else 1
-            return min(
-                max(
-                    0.1,
-                    s
-                    * (
-                        1
-                        + math.exp(self.w[8])
-                        * (11 - d)
-                        * math.pow(s, -self.w[9])
-                        * (math.exp((1 - r) * self.w[10]) - 1)
-                        * hard_penalty
-                        * easy_bonus
-                    ),
-                ),
-                36500,
-            )
+        pass
 
+    @abstractmethod
     def next_forget_stability(self, d: float, s: float, r: float) -> float:
-        if self.version[0] == 3:
-            return min(
-                max(
-                    0.1,
-                    self.w[9]
-                    * math.pow(d, self.w[10])
-                    * math.pow(s, self.w[11])
-                    * math.exp((1 - r) * self.w[12]),
-                ),
-                s,
-            )
-        elif self.version[0] == 4:
-            return min(
-                max(
-                    0.1,
-                    self.w[11]
-                    * math.pow(d, -self.w[12])
-                    * (math.pow(s + 1, self.w[13]) - 1)
-                    * math.exp((1 - r) * self.w[14]),
-                ),
-                s,
-            )
+        pass
 
     def set_fuzz_factor(self, cid: int, reps: int):
         random.seed(cid + reps)
@@ -217,18 +130,152 @@ class FSRS:
             return best_ivl
         return int(self.fuzz_factor * (max_ivl - min_ivl + 1) + min_ivl)
 
+    @abstractmethod
     def next_interval(self, stability, retention, max_ivl):
-        if self.version[0] == 3:
-            new_interval = self.apply_fuzz(
-                stability * math.log(retention) / math.log(0.9)
-            )
-        elif self.version[0] == 4:
-            new_interval = self.apply_fuzz(9 * stability * (1 / retention - 1))
-        return min(max(int(round(new_interval)), 1), max_ivl)
+        pass
 
     def set_card(self, card: Card):
         self.card = card
 
+
+class FSRS3(FSRS):
+    def __init__(self, version) -> None:
+        super().__init__(version)
+        self.w = [
+            1.0,
+            1.0,
+            5.0,
+            -0.5,
+            -0.5,
+            0.2,
+            1.4,
+            -0.12,
+            0.8,
+            2.0,
+            -0.2,
+            0.2,
+            1.0,
+        ]
+
+    def init_stability(self, rating: int) -> float:
+        return max(0.1, self.w[0] + self.w[1] * (rating - 1))
+
+    def init_difficulty(self, rating: int) -> float:
+        return constrain_difficulty(self.w[2] + self.w[3] * (rating - 3))
+
+    def next_difficulty(self, d: float, rating: int) -> float:
+        new_d = d + self.w[4] * (rating - 3)
+        return constrain_difficulty(self.mean_reversion(self.w[2], new_d))
+
+    def mean_reversion(self, init: float, current: float) -> float:
+        return self.w[5] * init + (1 - self.w[5]) * current
+
+    def next_recall_stability(self, d: float, s: float, r: float, rating: int) -> float:
+        return min(
+            max(
+                0.1,
+                s
+                * (
+                    1
+                    + math.exp(self.w[6])
+                    * (11 - d)
+                    * math.pow(s, self.w[7])
+                    * (math.exp((1 - r) * self.w[8]) - 1)
+                ),
+            ),
+            36500,
+        )
+
+    def next_forget_stability(self, d: float, s: float, r: float) -> float:
+        return min(
+            max(
+                0.1,
+                self.w[9]
+                * math.pow(d, self.w[10])
+                * math.pow(s, self.w[11])
+                * math.exp((1 - r) * self.w[12]),
+            ),
+            s,
+        )
+
+    def next_interval(self, stability, retention, max_ivl):
+        new_interval = self.apply_fuzz(
+            stability * math.log(retention) / math.log(0.9)
+        )
+        return min(max(int(round(new_interval)), 1), max_ivl)
+
+
+class FSRS4(FSRS):
+    def __init__(self, version) -> None:
+        super().__init__(version)
+        self.w = [
+            1.0,
+            2.0,
+            3.0,
+            4.0,
+            5.0,
+            0.5,
+            0.5,
+            0.2,
+            1.4,
+            0.2,
+            0.8,
+            2.0,
+            0.2,
+            0.2,
+            1.0,
+            0.5,
+            2.0,
+        ]
+    
+    def init_stability(self, rating: int) -> float:
+        return max(0.1, self.w[rating - 1])
+
+    def init_difficulty(self, rating: int) -> float:
+        return constrain_difficulty(self.w[4] - self.w[5] * (rating - 3))
+
+    def next_difficulty(self, d: float, rating: int) -> float:
+        new_d = d - self.w[6] * (rating - 3)
+        return constrain_difficulty(self.mean_reversion(self.w[4], new_d))
+
+    def mean_reversion(self, init: float, current: float) -> float:
+        return self.w[7] * init + (1 - self.w[7]) * current
+        
+    def next_recall_stability(self, d: float, s: float, r: float, rating: int) -> float:
+        hard_penalty = self.w[15] if rating == 2 else 1
+        easy_bonus = self.w[16] if rating == 4 else 1
+        return min(
+            max(
+                0.1,
+                s
+                * (
+                    1
+                    + math.exp(self.w[8])
+                    * (11 - d)
+                    * math.pow(s, -self.w[9])
+                    * (math.exp((1 - r) * self.w[10]) - 1)
+                    * hard_penalty
+                    * easy_bonus
+                ),
+            ),
+            36500,
+        )
+
+    def next_forget_stability(self, d: float, s: float, r: float) -> float:
+            return min(
+                max(
+                    0.1,
+                    self.w[11]
+                    * math.pow(d, -self.w[12])
+                    * (math.pow(s + 1, self.w[13]) - 1)
+                    * math.exp((1 - r) * self.w[14]),
+                ),
+                s,
+            )
+
+    def next_interval(self, stability, retention, max_ivl):
+        new_interval = self.apply_fuzz(9 * stability * (1 / retention - 1))
+        return min(max(int(round(new_interval)), 1), max_ivl)
 
 def reschedule(
     did, recent=False, filter_flag=False, filtered_cids={}, filtered_nid_string=""
